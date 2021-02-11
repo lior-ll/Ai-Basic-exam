@@ -119,8 +119,6 @@ class Covid19(MDP):
         return healthy, sick
     
     def get_actions(self, state):
-        # skip police meidics for now....
-        #actions = [('noa',(-1,-1))]
         actions = [()]
         if not self.police and not self.medics:
             return actions
@@ -135,9 +133,22 @@ class Covid19(MDP):
                 police_options_builder = [(x,) for x in police_options_builder]   
                 police_options.extend(police_options_builder)
             actions.extend(police_options)
-        #print(actions)
-        #tuple_united = lambda x : x[0] + x[1]
-        #actions = [tuple_united(action) for action in actions]
+            
+        if self.medics and len(healthy) > 0:
+            info = ["vaccinate"]*len(healthy)
+            medics_options_builder =list(zip(info, healthy))
+            comb_factor = min(self.medics, len(medics_options_builder))
+            medics_options = list(combinations(medics_options_builder, comb_factor))
+            if comb_factor > 1:
+                # add not pairs actions
+                medics_options_builder = [(x,) for x in medics_options_builder]   
+                medics_options.extend(medics_options_builder)
+            actions.extend(medics_options)
+        if self.medics and self.police:
+            assert False
+            #actions = list(product(medics_options, police_options)) #medics_options X police_options (cartesian product)
+            #tuple_united = lambda x : x[0] + x[1]
+            #actions = [tuple_united(action) for action in actions]
         return actions
             
             
@@ -165,9 +176,11 @@ class Covid19(MDP):
         elif 'Q' in status:
             turn = int(status[1])
             if turn < 2:
-                return[(1, 'Q' + str(turn + 1))]
+                return [(1, 'Q' + str(turn + 1))]
             else:
-                return[(1, 'H')]
+                return [(1, 'H')]
+        elif 'I' in status:
+            return [(1,'I')]
         else:
             assert False
         
@@ -202,7 +215,7 @@ class Covid19(MDP):
             #print(self.dict_state_to_tuple_state(new_state))
             all_states.append((p, self.dict_state_to_tuple_state(new_state)))               
         return all_states
-corona = Covid19(a_map, x=0, police=1)
+corona = Covid19(a_map, x=0, police=0, medics=2)
 
 def value_iteration(mdp, epsilon=0.001):
     """Solving an MDP by value iteration. [Figure 17.4]"""
