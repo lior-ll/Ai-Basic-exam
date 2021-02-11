@@ -1,3 +1,7 @@
+from itertools import combinations, combinations_with_replacement, permutations
+from itertools import product
+import numpy as np
+from mdp import *
 class Covid19(MDP):
     def __init__(self, initial_state, police=0, medics=0, x=0, gamma=0.9):
         self.DIMENSIONS = (len(initial_state), len(initial_state[0])) 
@@ -14,11 +18,13 @@ class Covid19(MDP):
         transitions = {}
         reward = {}
         terminals = []
-        actlist = [('noa',)] # for the case of no police no medics
+        #actlist = [('noa',)] # for the case of no police no medics
+        actlist = {}
         for s in states:
             reward[s] = self.get_state_score(s)
+            actlist[s] = self.get_actions(s) 
             transitions[s] = {}
-            for a in self.get_actions(s):
+            for a in actlist[s]:
                 transitions[s][a] = self.calculate_T(s, a)
         MDP.__init__(self, init, actlist=actlist,
                      terminals=terminals, transitions = transitions, 
@@ -56,7 +62,7 @@ class Covid19(MDP):
         for i in range(self.DIMENSIONS[0]):
             state_as_list.append([]*self.DIMENSIONS[1])
             for j in range(self.DIMENSIONS[1]):
-                state_as_list[i].append(state[(i , j )][0])
+                state_as_list[i].append(state[(i , j )])
         state_as_tuple = tuple(tuple(row) for row in state_as_list)
         return state_as_tuple
     
@@ -88,6 +94,19 @@ class Covid19(MDP):
                     score -= 5
         return score
     
+    def apply_action(self, actions, padstate):
+        '''action here is no padded state-padd'''
+        #print(actions)
+        if not actions:
+            return padstate
+        for atomic_action in actions:
+            effect, location = atomic_action[0], (atomic_action[1][0] + 1, atomic_action[1][1] + 1)
+            if 'v' in effect:
+                padstate[location] = 'I'
+            else:
+                padstate[location] = 'Q0'
+        return padstate
+    
     def process_state(self, state):
         healthy = []
         sick = []
@@ -101,10 +120,35 @@ class Covid19(MDP):
     
     def get_actions(self, state):
         # skip police meidics for now....
-        actions = [('noa',)]
+        #actions = [('noa',(-1,-1))]
+        actions = [()]
         if not self.police and not self.medics:
             return actions
-        #healthy, sick = self.process_state(state)
+        healthy, sick = self.process_state(state)
+        if self.police and len(sick) > 0:
+            info = ["quarantine"]*len(sick)
+            police_options_builder =list(zip(info, sick))
+            comb_factor = min(self.police, len(police_options_builder))
+            police_options = list(combinations(police_options_builder, comb_factor))
+            if comb_factor > 1:
+                # add not pairs actions
+                police_options_builder = [(x,) for x in police_options_builder]   
+                police_options.extend(police_options_builder)
+            actions.extend(police_options)
+        #print(actions)
+        #tuple_united = lambda x : x[0] + x[1]
+        #actions = [tuple_united(action) for action in actions]
+        return actions
+            
+            
+    def actions(self, state):
+        """Return a list of actions that can be performed in this state. By default, a
+        fixed list of actions, except for terminal states. Override this
+        method if you need to specialize by state."""
+        if state in self.terminals:
+            return [None]
+        else:
+            return self.actlist[state]       
         
     def stochastic_cell_dynamic(self, status, n_sicks=None):
         assert (status != 'H') or (n_sicks is not None) # H cell must come with n_sick information
@@ -118,20 +162,26 @@ class Covid19(MDP):
             else:                
                 p_sic = [0.1+f, 0.3+f, 0.7+f, 0.9+f][n_sicks-1]
                 return [(p_sic, 'S'), (1-p_sic, 'H')]
+        elif 'Q' in status:
+            turn = int(status[1])
+            if turn < 2:
+                return[(1, 'Q' + str(turn + 1))]
+            else:
+                return[(1, 'H')]
         else:
             assert False
         
     def calculate_T(self, state, action):
         #print(state)
-        org_state = state
-        state = self.pad_the_input(state)
-        # police medics operators - IGNROE
+        padstate = self.pad_the_input(state) # padd!
+        # police medics operators
+        padstate = self.apply_action(action, padstate)
         #apademy spread H -> S and recoverd S -> H
         stochastic_states = {}
         for i in range(1, self.DIMENSIONS[0] + 1):
             for j in range(1, self.DIMENSIONS[1] + 1): 
-                n_sick = self.get_sick_neigbors(state, (i,j))
-                stochastic_states[(i-1,j-1)] = self.stochastic_cell_dynamic(state[(i, j)], n_sick)
+                n_sick = self.get_sick_neigbors(padstate, (i,j))
+                stochastic_states[(i-1,j-1)] = self.stochastic_cell_dynamic(padstate[(i, j)], n_sick)
         
         #for line in self.state_to_agent(state):
         #    print(line)
@@ -152,5 +202,19 @@ class Covid19(MDP):
             #print(self.dict_state_to_tuple_state(new_state))
             all_states.append((p, self.dict_state_to_tuple_state(new_state)))               
         return all_states
-corona = Covid19(a_map, x=0)
+corona = Covid19(a_map, x=0, police=1)
+
+def value_iteration(mdp, epsilon=0.001):
+    """Solving an MDP by value iteration. [Figure 17.4]"""
+    U1 = {s: 0 for s in mdp.states}
+    R, T, gamma = mdp.R, mdp.T, mdp.gamma
+    while True:
+        U = U1.copy()
+        delta = 0
+        for s in mdp.states:
+            U1[s] = R(s) + gamma * max([sum([p * U[s1] for (p, s1) in T(s, a)])
+                                        for a in mdp.actions(s)])
+            delta = max(delta, abs(U1[s] - U[s]))
+        if delta < epsilon * (1 - gamma) / gamma:
+            return U
 v_pi = value_iteration(corona)
